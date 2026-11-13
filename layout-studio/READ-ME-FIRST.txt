@@ -1,0 +1,27 @@
+CADCraft, patched build for the Layout studio team
+=============================================
+
+What's new compared to the CADCraft you have:
+
+1. Hatch area
+   Click a hatch. Properties > Geometry now shows Area (islands deducted,
+   same number the AREA command gives).
+
+2. Cumulative area
+   Select several closed polylines (or several hatches). Properties shows
+   "Cumulative area": their areas added up. Open polylines are left out.
+
+3. TRIM and BREAK on construction lines (XLINE) and rays
+   Both now work like AutoCAD: trimming or breaking an XLINE leaves rays;
+   trimming or breaking a RAY leaves a line from its start plus a ray.
+
+How to run it (no install):
+   1. Right-click the zip > Extract All.
+   2. Double-click CADCraft.exe.
+   3. If Windows says "Windows protected your PC": More info > Run anyway.
+      (This build isn't code-signed, so Windows doesn't recognise it yet.)
+   Your existing CADCraft stays installed; this runs alongside it and
+   opens the same DWG/DXF files.
+
+Licences: CADCraft is open source (MIT / Apache-2.0, see licences/).
+The source changes are in source-changes/.
