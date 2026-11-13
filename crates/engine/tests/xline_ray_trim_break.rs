@@ -22,7 +22,7 @@ fn pieces(s: &Session) -> (Vec<(f64, f64, f64, f64)>, Vec<((f64, f64), (f64, f64
 }
 
 fn near(a: f64, b: f64) -> bool {
-    (a - b).abs() < 1e-6
+    (a - b).abs() < 1e-12
 }
 
 /// A session with a horizontal xline (or ray from the origin) along y = 0 and two vertical
@@ -107,4 +107,17 @@ fn breaking_a_ray_leaves_a_line_and_a_ray() {
     assert_eq!(rays.len(), 1, "{rays:?}");
     assert!(near(rays[0].0, 7.0) && near(rays[0].2, 1.0), "{rays:?}");
     assert!(lines.iter().any(|l| near(l.0.0, 0.0) && near(l.1.0, 3.0)), "{lines:?}");
+}
+
+/// At survey coordinates (half a million metres from the origin) the cut lands on the edge.
+#[test]
+fn trimming_an_xline_far_from_the_origin_cuts_exactly_at_the_edge() {
+    let mut s = Session::new();
+    let out =
+        s.execute("xline", &json!({ "base": [446269.0159378149, -35672.82525121742], "through": [446270.0159378149, -35672.82525121742] })).unwrap();
+    s.execute("line", &json!({ "points": [[446300.25, -35700.0], [446300.25, -35600.0]] })).unwrap();
+    s.execute("trim", &json!({ "handle": out["handle"], "pick": [446400.0, -35672.82525121742] })).unwrap();
+    let (rays, _, _) = pieces(&s);
+    assert_eq!(rays.len(), 1, "{rays:?}");
+    assert!((rays[0].0 - 446300.25).abs() < 1e-9, "{rays:?}");
 }

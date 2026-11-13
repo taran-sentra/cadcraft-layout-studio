@@ -1,6 +1,6 @@
 use super::{
     Arc, EngineError, Entity, EntityKind, Handle, Line, PolyVertex, Polyline, Prim, Result, Segment, Session, TAU, Vec2, angle_in_sweep, arc,
-    ccw_sweep, intersect_ext, line, lwpoly, norm_angle,
+    ccw_sweep, intersect_ext, line, line_line_infinite, lwpoly, norm_angle,
 };
 
 // ---------------- trim / extend ----------------
@@ -219,10 +219,18 @@ pub(super) fn unbounded_pieces(r: &cadcraft_doc::RayLine, u: Vec2, ray: bool, t1
 fn trim_unbounded(r: &cadcraft_doc::RayLine, ray: bool, cut: &[Segment], pick: Vec2) -> Result<Vec<EntityKind>> {
     let (b, u, start) = unbounded(r, ray)?;
     let seg = Segment::Line(Line::new(b + u * start, b + u * UNBOUNDED));
+    // The crossings of the long stand-in segment are found as for any curve; a straight cutting
+    // edge's crossing is then taken again from the xline's own base, so it is not off by the
+    // rounding of a point 1e8 away (60 came out as 59.99999998).
     let mut ts: Vec<f64> = cut
         .iter()
-        .flat_map(|c| intersect_ext(&seg, c, false))
-        .map(|x| (x - b).dot(u))
+        .flat_map(|c| {
+            let exact = match c {
+                Segment::Line(l) => line_line_infinite(b, b + u, l.a, l.b).map(|(_, t, _)| t),
+                Segment::Arc { .. } => None,
+            };
+            intersect_ext(&seg, c, false).into_iter().map(move |x| exact.unwrap_or_else(|| (x - b).dot(u)))
+        })
         .filter(|t| t.is_finite() && *t > start + 1e-9 && *t < UNBOUNDED - 1e-9)
         .collect();
     ts.sort_by(f64::total_cmp);
