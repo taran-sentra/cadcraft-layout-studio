@@ -168,9 +168,72 @@ pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Resu
             keep.into_iter().collect()
         }
         EntityKind::LwPolyline(p) => trim_polyline(p, &cut, pick)?,
+        EntityKind::XLine(r) => trim_unbounded(r, false, &cut, pick)?,
+        EntityKind::Ray(r) => trim_unbounded(r, true, &cut, pick)?,
         k => crate::cmd::modify2::trim_other(k, &cut, pick)?,
     };
     replace_with_pieces(s, h, pieces)
+}
+
+/// How far an xline or ray is followed for its crossings: as far as it is drawn as a cutting edge
+/// (`prim_to_segments`).
+const UNBOUNDED: f64 = 1e8;
+
+/// An xline (`ray` false) or ray as its base, its unit direction and where it starts, as a
+/// distance from the base along that direction (`-UNBOUNDED` for an xline, 0 for a ray).
+pub(super) fn unbounded(r: &cadcraft_doc::RayLine, ray: bool) -> Result<(Vec2, Vec2, f64)> {
+    let d = r.dir.xy();
+    let n = d.len();
+    if !n.is_finite() || n < 1e-12 || !r.base.x.is_finite() || !r.base.y.is_finite() {
+        return Err(EngineError::Other("The object has no direction.".into()));
+    }
+    Ok((r.base.xy(), d * (1.0 / n), if ray { 0.0 } else { -UNBOUNDED }))
+}
+
+/// What is left of an xline (`ray` false) or ray once the stretch between distances `t1` and
+/// `t2` from its base is removed, as AutoCAD leaves it: the part before `t1` becomes a ray running
+/// back from it (of an xline) or a line from the base (of a ray), the part after `t2` a ray from
+/// it. `None` keeps nothing on that side.
+pub(super) fn unbounded_pieces(r: &cadcraft_doc::RayLine, u: Vec2, ray: bool, t1: Option<f64>, t2: Option<f64>) -> Vec<EntityKind> {
+    let z = r.base.z;
+    let b = r.base.xy();
+    let at = |t: f64| (b + u * t).to3(z);
+    let mut v = Vec::new();
+    if let Some(t1) = t1 {
+        if ray {
+            if t1 > 1e-9 {
+                v.push(EntityKind::Line(cadcraft_doc::Line { a: r.base, b: at(t1) }));
+            }
+        } else {
+            v.push(EntityKind::Ray(cadcraft_doc::RayLine { base: at(t1), dir: (u * -1.0).to3(0.0) }));
+        }
+    }
+    if let Some(t2) = t2 {
+        v.push(EntityKind::Ray(cadcraft_doc::RayLine { base: at(t2), dir: u.to3(0.0) }));
+    }
+    v
+}
+
+/// TRIM of an xline or ray: the stretch around `pick` between the cutting edges either side goes.
+/// A finite piece left over becomes a line, an unbounded one a ray (issue #1235).
+fn trim_unbounded(r: &cadcraft_doc::RayLine, ray: bool, cut: &[Segment], pick: Vec2) -> Result<Vec<EntityKind>> {
+    let (b, u, start) = unbounded(r, ray)?;
+    let seg = Segment::Line(Line::new(b + u * start, b + u * UNBOUNDED));
+    let mut ts: Vec<f64> = cut
+        .iter()
+        .flat_map(|c| intersect_ext(&seg, c, false))
+        .map(|x| (x - b).dot(u))
+        .filter(|t| t.is_finite() && *t > start + 1e-9 && *t < UNBOUNDED - 1e-9)
+        .collect();
+    ts.sort_by(f64::total_cmp);
+    ts.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+    let tp = (pick - b).dot(u).max(start);
+    let lo = ts.iter().copied().filter(|t| *t < tp).reduce(f64::max);
+    let hi = ts.iter().copied().filter(|t| *t > tp).reduce(f64::min);
+    if lo.is_none() && hi.is_none() {
+        return Err(EngineError::Other("Object does not intersect a cutting edge.".into()));
+    }
+    Ok(unbounded_pieces(r, u, ray, lo, hi))
 }
 
 /// Put `pieces` in place of object `h` as AutoCAD 2024's BREAK and TRIM leave them: the first
