@@ -1,4 +1,4 @@
-use super::trim::{param_on, replace_with_pieces, sub_polyline};
+use super::trim::{param_on, replace_with_pieces, sub_polyline, unbounded, unbounded_pieces};
 use super::{
     Accept, Arc, EngineError, Entity, EntityKind, Handle, Input, Interactive, Line, PolyVertex, Polyline, Prompt, Result, Segment, Session, Step,
     Value, Vec2, arc, bad, json, lwpoly, norm_angle, point_param, point_req, targets,
@@ -102,6 +102,17 @@ pub(crate) fn break_entity(s: &mut Session, h: Handle, p1: Vec2, p2: Vec2) -> Re
                 }
                 v
             }
+        }
+        // An xline breaks into two rays, a ray into a line and a ray (issue #1235).
+        EntityKind::XLine(r) | EntityKind::Ray(r) => {
+            let ray = matches!(e.kind, EntityKind::Ray(_));
+            let (b, u, start) = unbounded(r, ray)?;
+            let par = |q: Vec2| (q - b).dot(u).max(start);
+            let (mut t1, mut t2) = (par(p1), par(p2));
+            if t1 > t2 {
+                std::mem::swap(&mut t1, &mut t2);
+            }
+            unbounded_pieces(r, u, ray, Some(t1), Some(t2))
         }
         _ => return Err(EngineError::Other("Cannot break that object.".into())),
     };
