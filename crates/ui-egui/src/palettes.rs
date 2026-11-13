@@ -1201,6 +1201,8 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 });
                 num(ui, "Scale", "scale", real(hh.scale), &mut set, &mut bad, ids);
                 num(ui, "Angle", "angle", real(hh.angle.to_degrees()), &mut set, &mut bad, ids);
+                let area = memo.get("hatch.area", || real(hh.area()));
+                prop_row(ui, "Area", |ui| read_only(ui, &area));
             }
             EntityKind::Dimension(dm) => {
                 prop_row(ui, "Text override", |ui| {
@@ -1422,6 +1424,21 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                     if let EntityKind::LwPolyline(p) = k { Some(if p.closed { real(geom(p).area().abs()) } else { String::new() }) } else { None }
                 });
                 prop_row(ui, "Area", |ui| read_only(ui, &area));
+                // The closed polylines' areas added up, as the Properties palette gives a
+                // selection of hatches; open ones have no area and are left out.
+                let total = memo.get("poly.cumulative_area", || {
+                    let areas: Vec<f64> = sel
+                        .iter()
+                        .filter_map(|h| match d.entity(*h).map(|x| &x.kind) {
+                            Some(EntityKind::LwPolyline(p)) if p.closed => Some(geom(p).area().abs()),
+                            _ => None,
+                        })
+                        .collect();
+                    (!areas.is_empty()).then(|| real(areas.iter().sum()))
+                });
+                if let Some(total) = total {
+                    prop_row(ui, "Cumulative area", |ui| read_only(ui, &total));
+                }
                 let closed = shared("poly.closed", &|k| {
                     if let EntityKind::LwPolyline(p) = k { Some(if p.closed { "Yes" } else { "No" }.to_string()) } else { None }
                 });
@@ -1447,6 +1464,19 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 num(ui, "Scale", "scale", scale, &mut set, &mut bad, ids);
                 let angle = shared("hatch.angle", &|k| if let EntityKind::Hatch(h) = k { Some(realx(h.angle.to_degrees())) } else { None });
                 num(ui, "Angle", "angle", angle, &mut set, &mut bad, ids);
+                let area = shared("hatch.area", &|k| if let EntityKind::Hatch(h) = k { Some(real(h.area())) } else { None });
+                prop_row(ui, "Area", |ui| read_only(ui, &area));
+                let total = memo.get("hatch.cumulative_area", || {
+                    real(
+                        sel.iter()
+                            .filter_map(|h| match d.entity(*h).map(|x| &x.kind) {
+                                Some(EntityKind::Hatch(hh)) => Some(hh.area()),
+                                _ => None,
+                            })
+                            .sum(),
+                    )
+                });
+                prop_row(ui, "Cumulative area", |ui| read_only(ui, &total));
             }
             EntityKind::Insert(_) => {
                 // A dynamic block reference shows its dynamic block's name, as with one reference;
@@ -1665,6 +1695,35 @@ mod tests {
             }
             assert!(texts.iter().any(|t| t == VARIES), "{command}: differing values show {VARIES}; painted: {texts:?}");
         }
+    }
+
+    /// A hatch shows its area, and closed polylines or hatches selected together show their
+    /// cumulative area as well (an architect's area statement, read off the palette).
+    #[test]
+    fn hatches_and_closed_polylines_show_area_and_cumulative_area() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        let a = app.run("pline", json!({ "vertices": [[0, 0], [10, 0], [10, 10]], "closed": true })).unwrap();
+        let b = app.run("pline", json!({ "vertices": [[20, 0], [30, 0], [30, 20], [20, 20]], "closed": true })).unwrap();
+        let handles: Vec<String> = [a, b].iter().map(|o| o["handle"].as_str().unwrap().to_string()).collect();
+        app.run("select", json!({ "handles": handles })).unwrap();
+        let texts = painted_texts(&mut app, properties_section);
+        assert!(texts.iter().any(|t| t.as_str() == crate::i18n::t("Cumulative area")), "painted: {texts:?}");
+        assert!(texts.iter().any(|t| t == "250.0000"), "50 + 200; painted: {texts:?}");
+
+        app.run("hatch", json!({ "points": [[25, 5]], "pattern": "SOLID" })).unwrap();
+        let hatch = app.session.doc().unwrap().model.iter().find_map(|e| matches!(e.kind, EntityKind::Hatch(_)).then(|| e.handle.hex())).unwrap();
+        app.run("select", json!({ "handles": [hatch.clone()] })).unwrap();
+        let texts = painted_texts(&mut app, properties_section);
+        assert!(texts.iter().any(|t| t == "200.0000"), "one hatch shows its area; painted: {texts:?}");
+
+        app.run("hatch", json!({ "points": [[8, 1]], "pattern": "SOLID" })).unwrap();
+        let hatches: Vec<String> =
+            app.session.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Hatch(_))).map(|e| e.handle.hex()).collect();
+        assert_eq!(hatches.len(), 2);
+        app.run("select", json!({ "handles": hatches })).unwrap();
+        let texts = painted_texts(&mut app, properties_section);
+        assert!(texts.iter().any(|t| t == VARIES), "two hatches' areas differ; painted: {texts:?}");
+        assert!(texts.iter().any(|t| t == "250.0000"), "their cumulative area; painted: {texts:?}");
     }
 
     /// The radius of every selected circle.
