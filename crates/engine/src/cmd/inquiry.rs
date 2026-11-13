@@ -509,19 +509,7 @@ pub(super) fn object_area(s: &Session, h: Handle) -> Result<(f64, f64)> {
             // fall short as the ellipse flattens: 0.3% on a 100:1 one).
             (cadcraft_geom::PI * a * b, arc.arc_length_from(0.0, cadcraft_geom::TAU))
         }
-        EntityKind::Hatch(hh) => {
-            // Odd parity, as drawn: a loop nested inside an odd number of other loops is an unfilled island.
-            let geoms: Vec<Polyline> = hh.loops.iter().map(|l| Polyline { vertices: l.vertices.clone(), closed: true }).collect();
-            let polys: Vec<Vec<Vec2>> = geoms.iter().map(|g| g.tessellate(1e-3)).collect();
-            let mut total = (0.0, 0.0);
-            for (i, g) in geoms.iter().enumerate() {
-                let probe = polys.get(i).and_then(|p| p.first().copied());
-                let depth = probe.map_or(0, |pt| polys.iter().enumerate().filter(|(j, q)| *j != i && cadcraft_geom::point_in_polygon(q, pt)).count());
-                total.0 += if depth % 2 == 0 { g.area().abs() } else { -g.area().abs() };
-                total.1 += g.len();
-            }
-            total
-        }
+        EntityKind::Hatch(hh) => hh.area_and_perimeter(),
         EntityKind::Region(r) => (r.area(), r.perimeter()),
         // Like an open polyline: the area closed by the chord, the perimeter its own length.
         EntityKind::Spline(sp) if sp.is_valid() => {
